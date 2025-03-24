@@ -1,131 +1,59 @@
 import numpy as np
-import random
 import gym
+import random
+import pickle
 
-# Global Q-table (simulating pre-training)
-Q = {}
-trained = False
+# 創建 Taxi 環境
+env = gym.make("Taxi-v3")
 
-def compute_state_key(obs):
-    """Convert observation to a custom state key."""
-    taxi_row = obs['taxi_row']
-    taxi_col = obs['taxi_col']
-    passenger_location = obs['passenger_location']  # 0-3 or 4
-    destination = obs['destination']  # 0-3
-    locations = obs['locations']  # [(row, col), ...] for R,G,Y,B
-    grid_size = obs['grid_size']
-    obstacles = obs['obstacles']  # [(row, col), ...]
+# 參數設定
+alpha = 0.1    # 學習率
+gamma = 0.9    # 折扣因子
+epsilon = 0.1  # 探索率 (ε-greedy)
+episodes = 5000  # 訓練次數
 
-    # Passenger status
-    passenger_status = 0 if passenger_location != 4 else 1
+# 初始化 Q-table (狀態數量 x 動作數量)
+q_table = np.zeros([env.observation_space.n, env.action_space.n])
 
-    # Direction to passenger
-    if passenger_status == 0:
-        p_row, p_col = locations[passenger_location]
-        dx_p = p_col - taxi_col
-        dy_p = p_row - taxi_row
-        dir_passenger = (int(dx_p > 0) - int(dx_p < 0), int(dy_p > 0) - int(dy_p < 0))
-    else:
-        dir_passenger = (0, 0)
+# 訓練代理
+for episode in range(episodes):
+    state, _ = env.reset()  # 初始化環境
+    done = False
 
-    # Direction to destination
-    d_row, d_col = locations[destination]
-    dx_d = d_col - taxi_col
-    dy_d = d_row - taxi_row
-    dir_destination = (int(dx_d > 0) - int(dx_d < 0), int(dy_d > 0) - int(dy_d < 0))
+    while not done:
+        # ε-greedy 探索策略
+        if random.uniform(0, 1) < epsilon:
+            action = env.action_space.sample()  # 探索 (隨機選擇動作)
+        else:
+            action = np.argmax(q_table[state])  # 利用 (選擇最高 Q 值的動作)
 
-    # Local obstacles (1 if obstacle or wall, 0 otherwise)
-    ob_n = 1 if taxi_row == 0 or (taxi_row - 1, taxi_col) in obstacles else 0
-    ob_s = 1 if taxi_row == grid_size - 1 or (taxi_row + 1, taxi_col) in obstacles else 0
-    ob_e = 1 if taxi_col == grid_size - 1 or (taxi_row, taxi_col + 1) in obstacles else 0
-    ob_w = 1 if taxi_col == 0 or (taxi_row, taxi_col - 1) in obstacles else 0
-    obstacles_tuple = (ob_n, ob_s, ob_e, ob_w)
+        # 執行動作，獲得回饋
+        next_state, reward, done, truncated, _ = env.step(action)
 
-    return (passenger_status, dir_passenger, dir_destination, obstacles_tuple)
+        # 增加對牆壁的懲罰
+        if reward == -5:  # 撞牆的懲罰
+            reward = -100  # 設定較大的負獎勵
 
-def heuristic_action(state_key):
-    """Heuristic for unseen states."""
-    passenger_status, dir_passenger, dir_destination, obstacles = state_key
-    ob_n, ob_s, ob_e, ob_w = obstacles
+        # 更新 Q-table
+        q_table[state, action] = q_table[state, action] + alpha * (reward + gamma * np.max(q_table[next_state]) - q_table[state, action])
 
-    if passenger_status == 0:
-        if dir_passenger == (0, 0):
-            return 4  # Pickup
-        dx, dy = dir_passenger
-    else:
-        if dir_destination == (0, 0):
-            return 5  # Dropoff
-        dx, dy = dir_destination
+        # 移動到下一個狀態
+        state = next_state
 
-    # Move toward target, avoiding obstacles
-    if dx > 0 and not ob_e:
-        return 2  # East
-    elif dx < 0 and not ob_w:
-        return 3  # West
-    elif dy > 0 and not ob_s:
-        return 0  # South
-    elif dy < 0 and not ob_n:
-        return 1  # North
-    else:
-        # Random move among unblocked directions
-        moves = []
-        if not ob_n: moves.append(1)
-        if not ob_s: moves.append(0)
-        if not ob_e: moves.append(2)
-        if not ob_w: moves.append(3)
-        return random.choice(moves) if moves else random.choice([0, 1, 2, 3])
+# 儲存訓練好的 Q-table
+with open("q_table.pkl", "wb") as f:
+    pickle.dump(q_table, f)
 
-def train_agent():
-    """Train the Q-table (simulated as a one-time initialization)."""
-    global Q, trained
-    if trained:
-        return
 
-    # Initialize environment (assuming custom Taxi-v3 is available)
-    env = gym.make('Taxi-v3')  # Placeholder; assumes modified env
-    alpha = 0.1
-    gamma = 0.99
-    epsilon = 1.0
-    epsilon_decay = 0.999
-    min_epsilon = 0.01
-    episodes = 5000  # Reduced for practicality; adjust as needed
-
-    for _ in range(episodes):
-        obs = env.reset()
-        done = False
-        while not done:
-            state_key = compute_state_key(obs)
-            if state_key not in Q:
-                Q[state_key] = np.zeros(6)
-
-            # Epsilon-greedy action
-            if random.random() < epsilon:
-                action = random.choice([0, 1, 2, 3, 4, 5])
-            else:
-                action = np.argmax(Q[state_key])
-
-            next_obs, reward, done, _ = env.step(action)
-            next_state_key = compute_state_key(next_obs)
-            if next_state_key not in Q:
-                Q[next_state_key] = np.zeros(6)
-
-            # Q-update
-            Q[state_key][action] += alpha * (reward + gamma * np.max(Q[next_state_key]) - Q[state_key][action])
-            obs = next_obs
-
-        epsilon = max(min_epsilon, epsilon * epsilon_decay)
-
-    trained = True
-    # Note: In practice, save Q with pickle.dump(Q, open('q_table.pkl', 'wb'))
-
+# 測試代理
 def get_action(obs):
-    """Return the agent's action based on the observation."""
-    # Train once (simulating pre-training)
-    train_agent()
-
-    state_key = compute_state_key(obs)
-    if state_key in Q:
-        return int(np.argmax(Q[state_key]))  # Ensure integer action
-    else:
-        return heuristic_action(state_key)
-
+    # 加載訓練好的 Q-table
+    with open("q_table.pkl", "rb") as f:
+        q_table = pickle.load(f)
+    
+    # 若狀態不在 Q-table，則隨機選擇動作
+    if obs not in q_table:
+        return random.choice([0, 1, 2, 3, 4, 5])
+    
+    # 選擇最優動作
+    return np.argmax(q_table[obs])
