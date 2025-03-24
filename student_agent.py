@@ -3,7 +3,7 @@ import numpy as np
 import pickle
 import random
 import gym
-with open("q_table.plk", "rb") as f:
+with open("./q_table.pkl", "rb") as f:
     Q_table = pickle.load(f)
 def get_action(obs):
     
